@@ -38,19 +38,12 @@ jobs:
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
 
+      # No signing env vars → tauri builds an UNSIGNED (ad-hoc) .app + .dmg.
+      # Passing empty APPLE_* secrets makes the bundler attempt codesign and fail
+      # ("failed to import keychain certificate"). To ship signed later, add the
+      # APPLE_* / TAURI_SIGNING_* secrets and re-introduce them here as `env:`.
       - name: Build & release (unsigned arm64 .dmg)
         uses: tauri-apps/tauri-action@v0
-        env:
-          # Updater signing (optional; safe to leave unset for unsigned v0.1.0).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS signing/notarization (set these secrets to ship a signed build).
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "LUMA Desktop ${{ github.ref_name }}"
