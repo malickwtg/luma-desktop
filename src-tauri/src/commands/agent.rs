@@ -13,7 +13,11 @@ const MCP_URL: &str = "https://luma.waytogrow.es/api/mcp";
 /// (never from the WebView) and injects it via env. Streams stdout JSON lines to
 /// the `agent-event` window event and stderr to `agent-stderr`.
 #[tauri::command]
-pub fn start_agent_session(window: Window, state: State<AgentState>) -> Result<(), String> {
+pub fn start_agent_session(
+    window: Window,
+    state: State<AgentState>,
+    model: Option<String>,
+) -> Result<(), String> {
     {
         let guard = state.child.lock().map_err(|_| "estado bloqueado")?;
         if guard.is_some() {
@@ -31,6 +35,16 @@ pub fn start_agent_session(window: Window, state: State<AgentState>) -> Result<(
     let mut cmd = build_sidecar_command();
     cmd.env("LUMA_MCP_URL", MCP_URL);
     cmd.env("LUMA_MCP_TOKEN", token);
+    // Only forward a known model slug; ignore anything unexpected so a bad value
+    // can't silently break the SDK (precedent: AI Gateway slug bug).
+    if let Some(m) = model {
+        if matches!(
+            m.as_str(),
+            "claude-haiku-4-5" | "claude-sonnet-4-6" | "claude-opus-4-8"
+        ) {
+            cmd.env("LUMA_MODEL", m);
+        }
+    }
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());

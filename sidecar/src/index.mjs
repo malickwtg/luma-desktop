@@ -20,6 +20,9 @@ const MCP_TOKEN = process.env.LUMA_MCP_TOKEN;
 // Path to the bundled `claude` binary (set by Rust in the packaged app). In dev
 // it's unset and the SDK resolves its own binary from node_modules.
 const CLAUDE_PATH = process.env.LUMA_CLAUDE_PATH;
+// Model slug chosen in the UI (Haiku/Sonnet/Opus). Bound at session start; the
+// UI restarts the session when the user picks a different one.
+const MODEL = process.env.LUMA_MODEL;
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -100,6 +103,27 @@ const canUseTool = async (toolName, input) => {
   };
 };
 
+// Best-effort: detect an expired/revoked MCP token mid-session so the UI can tell
+// the user to reconnect instead of the model saying "no encuentro datos".
+let authNotified = false;
+function looksAuthError(message) {
+  try {
+    const c = message && message.message && message.message.content;
+    if (!Array.isArray(c)) return false;
+    return c.some(
+      (b) =>
+        b &&
+        b.type === "tool_result" &&
+        b.is_error &&
+        /unauthorized|invalid.?token|forbidden|\b401\b|\b403\b|expired|api key/i.test(
+          typeof b.content === "string" ? b.content : JSON.stringify(b.content || "")
+        )
+    );
+  } catch {
+    return false;
+  }
+}
+
 send({ type: "ready" });
 
 try {
@@ -108,6 +132,7 @@ try {
     options: {
       systemPrompt: SYSTEM_PROMPT,
       ...(CLAUDE_PATH ? { pathToClaudeCodeExecutable: CLAUDE_PATH } : {}),
+      ...(MODEL ? { model: MODEL } : {}),
       mcpServers: {
         luma: {
           type: "http",
@@ -134,6 +159,10 @@ try {
   });
 
   for await (const message of response) {
+    if (!authNotified && looksAuthError(message)) {
+      authNotified = true;
+      send({ type: "auth-expired" });
+    }
     send(message);
   }
 } catch (e) {
