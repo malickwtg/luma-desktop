@@ -1,0 +1,14 @@
+{
+  "name": "luma-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Node sidecar that hosts the Claude Agent SDK and bridges it to LUMA's MCP.",
+  "main": "src/index.mjs",
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.195"
+  }
+}

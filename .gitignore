@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+sidecar/node_modules/
+
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/gen/
+
+# Bundled sidecar binary (built into src-tauri/binaries by the build step)
+src-tauri/binaries/
+
+# Sidecar build output
+sidecar/dist/
+
+# Env / secrets — never commit
+.env
+.env.*
+
+# macOS
+.DS_Store

@@ -1,0 +1,6 @@
+# Pin the Rust toolchain so every machine + CI builds identically.
+# edition2024 (required by recent tauri-build deps) is stable since Rust 1.85.
+[toolchain]
+channel = "1.88.0"
+components = ["rustfmt", "clippy"]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]

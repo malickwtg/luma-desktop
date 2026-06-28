@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Grant IPC access to the LUMA bridge commands ONLY to the main window AND ONLY when it is showing the remote LUMA origin. This is the central security control: a stray/injected origin (about:blank, data:, a hijacked redirect, a third-party iframe) cannot invoke native commands because it is not in remote.urls. Custom bridge commands (store_luma_token, start_agent_session, ...) are registered in lib.rs; none of them ever returns the token back to the WebView.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://luma.waytogrow.es/*"]
+  },
+  "permissions": ["core:event:default"]
+}

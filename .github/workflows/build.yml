@@ -1,0 +1,78 @@
+name: build
+
+# Release builds are TAG-triggered, NOT on every push to main: signing +
+# notarization are slow and burn macOS runner minutes / notarization quota.
+# (Eng review §4.) Use workflow_dispatch for an on-demand unsigned smoke build.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            sidecar/pnpm-lock.yaml
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS deps (app + sidecar)
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir sidecar install --frozen-lockfile
+
+      # NOTE (follow-up): the Node sidecar + its bundled `claude` binary are NOT
+      # yet packaged as a Tauri externalBin, so a release artifact loads the LUMA
+      # web (milestone 1) but the chat sidecar must still be present at runtime.
+      # Bundle the sidecar (e.g. `bun build --compile` → src-tauri/binaries/) and
+      # add `bundle.externalBin` before shipping the chat to end users. Every
+      # bundled executable (shell + node + claude) must be signed + notarized or
+      # Gatekeeper/SmartScreen blocks it. See README → Packaging.
+
+      - name: Build & release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # macOS signing + notarization
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Tauri updater signing (for future auto-updates)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "LUMA Desktop ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
