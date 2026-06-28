@@ -85,6 +85,10 @@
   ready(function () {
     if (!window.__TAURI__) return; // not running inside the desktop app
 
+    // App version (for error telemetry — which release failed).
+    let APP_VERSION = "";
+    invoke("get_app_version").then((v) => { APP_VERSION = String(v || ""); }).catch(() => {});
+
     if (!document.getElementById("luma-desktop-fonts")) {
       const pc1 = document.createElement("link");
       pc1.rel = "preconnect"; pc1.href = "https://fonts.googleapis.com";
@@ -486,6 +490,7 @@
           if (resp.status === 404) { sys("Esta versión de LUMA aún no soporta el asistente de escritorio. Actualiza LUMA e inténtalo de nuevo."); starting = false; return; }
           if (resp.status === 403) { sys("El asistente de escritorio está disponible solo para Dirección en esta versión."); starting = false; return; }
           if (resp.status === 401) { sys("Inicia sesión en LUMA primero (la pestaña debe estar logueada).", true); starting = false; return; }
+          if (resp.status === 503) { sys("El asistente de escritorio está desactivado temporalmente."); starting = false; return; } // D4
           if (!resp.ok) { sys("No se pudo conectar el asistente (" + resp.status + ")."); starting = false; return; }
           const { token } = await resp.json();
           await invoke("store_luma_token", { token });
@@ -503,6 +508,7 @@
       } catch (err) {
         setTyping(false); setInFlight(false);
         sys("Error al iniciar el asistente: " + errMsg(err), true);
+        reportError("start-failed", errMsg(err));
       } finally {
         starting = false;
       }
@@ -561,12 +567,15 @@
       } else if (m.type === "auth-expired") {
         started = false; setTyping(false); setInFlight(false);
         sys("Tu sesión con LUMA caducó. Cierra y reabre la app para reconectar.", true);
+        reportError("auth-expired", "");
       } else if (m.type === "fatal" || m.type === "error") {
         setTyping(false); setInFlight(false);
         sys("Error del asistente: " + (m.message || "desconocido"), true);
+        reportError("agent-" + m.type, m.message);
       } else if (m.type === "sidecar-exit") {
         started = false; setTyping(false); setInFlight(false);
         sys("El asistente se cerró." + (stderrTail() || " Reábrelo para continuar."), true);
+        reportError("sidecar-exit", stderrTail());
       }
       if (inFlight) armWatchdog();
     }
@@ -628,6 +637,17 @@
     }
     function scrollDown() { const b = $(".body"); b.scrollTop = b.scrollHeight; }
     function errMsg(err) { return err && err.message ? err.message : String(err); }
+    // D3: best-effort error telemetry (error-only, no business data).
+    function reportError(type, message) {
+      try {
+        fetch("/api/desktop/telemetry", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type, message: String(message || "").slice(0, 500), version: APP_VERSION }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch (_) {}
+    }
     function el(tag, attrs, text) {
       const n = document.createElement(tag);
       if (attrs) for (const k in attrs) n.setAttribute(k, attrs[k]);

@@ -5,6 +5,7 @@ fn main() {
     tauri_build::try_build(
         tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
             "get_platform",
+            "get_app_version",
             "check_claude_installed",
             "check_claude_auth",
             "store_luma_token",

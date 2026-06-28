@@ -50,6 +50,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_platform,
+            commands::get_app_version,
             commands::check_claude_installed,
             commands::check_claude_auth,
             commands::store_luma_token,

@@ -9,6 +9,7 @@
   "permissions": [
     "core:event:default",
     "allow-get-platform",
+    "allow-get-app-version",
     "allow-check-claude-installed",
     "allow-check-claude-auth",
     "allow-store-luma-token",
