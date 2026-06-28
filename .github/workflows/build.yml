@@ -13,6 +13,8 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    permissions:
+      contents: write # create the GitHub Release + upload the .dmg
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +46,8 @@ jobs:
       # APPLE_* / TAURI_SIGNING_* secrets and re-introduce them here as `env:`.
       - name: Build & release (unsigned arm64 .dmg)
         uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "LUMA Desktop ${{ github.ref_name }}"
