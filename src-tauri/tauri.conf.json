@@ -7,18 +7,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "LUMA",
-        "url": "https://luma.waytogrow.es",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 1200,
-        "minHeight": 700,
-        "resizable": true
-      }
-    ],
+    "withGlobalTauri": true,
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
     }

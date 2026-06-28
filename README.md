@@ -96,8 +96,9 @@ El sidecar se lanza desde Rust (`commands/agent.rs`). En dev resuelve
 - [x] **Hito 1** — proyecto Tauri que carga `luma.waytogrow.es` (config + capabilities + íconos).
 - [x] **Hito 1.5** — bridge Rust ↔ sidecar Node (spawn/stdin/stdout, kill-chain). *(cableado; `cargo check` verde)*
 - [x] **Hito 2 (backend)** — sidecar con Agent SDK + MCP `http` + token desde Keychain, restringido a tools de LUMA. *(validado: importa el SDK, `query` ok, binario nativo bundleado)*
-- [ ] **UI de chat** — parche Next.js en el repo LUMA. El review concluyó **reutilizar** `components/assistant/assistant-widget.tsx` (extraer un `<ChatPanel>` y variar solo el transporte: HTTP vs eventos Tauri). NO construir uno nuevo.
-- [ ] **Empaquetado release** — bundlear el sidecar Node + binario `claude` como `externalBin`; firmar + notarizar los 3 binarios; `.dmg` Universal + `.exe`.
+- [x] **UI de chat (overlay)** — `src-tauri/src/overlay.js` inyectado por `initialization_script`: panel flotante self-contained sobre la web, sin depender de un parche en el repo LUMA. Provisiona el token (`/api/desktop/provision-token`), arranca el sidecar y stremea respuestas.
+- [ ] **Chat funcional end-to-end** — depende de: (1) **#1479 desplegado** en prod (el endpoint `/api/desktop/provision-token`), (2) bundlear el sidecar + binario `claude` (`bun build --compile` ya validado: 59MB; claude 214MB) como `externalBin`/resource y pasar `pathToClaudeCodeExecutable`, (3) validar en máquina limpia.
+- [ ] **Empaquetado firmado** — firmar + notarizar (Apple Developer + cert Windows); `.dmg` Universal + `.exe`.
 - [ ] **Auto-update** — `tauri-updater` apuntando a GitHub Releases.
 
 ## Packaging (follow-up)

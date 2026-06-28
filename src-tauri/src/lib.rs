@@ -52,6 +52,22 @@ pub fn run() {
             commands::send_message,
             commands::stop_agent_session,
         ])
+        .setup(|app| {
+            // Create the main window pointing at the remote LUMA web, and inject
+            // the self-contained chat overlay (runs before page scripts, not
+            // subject to the page CSP). Built in Rust (not tauri.conf.json) so we
+            // can attach the initialization_script.
+            let url: tauri::Url = "https://luma.waytogrow.es"
+                .parse()
+                .expect("URL de LUMA inválida");
+            tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(url))
+                .title("LUMA")
+                .inner_size(1440.0, 900.0)
+                .min_inner_size(1200.0, 700.0)
+                .initialization_script(include_str!("overlay.js"))
+                .build()?;
+            Ok(())
+        })
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) {
                 // No orphan sidecar/claude process holding a live MCP token.
