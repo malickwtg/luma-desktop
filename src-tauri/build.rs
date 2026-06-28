@@ -13,6 +13,10 @@ fn main() {
             "start_agent_session",
             "send_message",
             "stop_agent_session",
+            "history_save",
+            "history_list",
+            "history_load",
+            "history_delete",
         ])),
     )
     .expect("failed to run tauri-build");

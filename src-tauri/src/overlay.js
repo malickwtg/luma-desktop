@@ -50,6 +50,8 @@
     alert: stroke('<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>'),
     users: stroke('<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>'),
     package: stroke('<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>'),
+    history: stroke('<path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/>'),
+    mic: stroke('<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/>'),
   };
 
   // v1 desktop assistant is Dirección-only (SUPERADMIN/DIRECTIVO). Suggestions
@@ -203,6 +205,20 @@
       .modelmenu button:hover, .modelmenu button.sel { background: var(--accent); }
       .modelmenu .ml { font-size: 12px; font-weight: 500; color: var(--fg); }
       .modelmenu .md { font-size: 10px; color: var(--muted-fg); margin-top: 1px; }
+
+      .histview .hrow { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+      .histview .hrow:hover { background: var(--accent); }
+      .histview .hmeta { flex: 1; min-width: 0; }
+      .histview .htitle { font-size: 13px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .histview .hsub { font-size: 11px; color: var(--muted-fg); margin-top: 2px; }
+      .histview .hdel { flex: none; width: 26px; height: 26px; border: none; background: none; color: var(--muted-fg); cursor: pointer; display: grid; place-items: center; }
+      .histview .hdel svg { width: 14px; height: 14px; }
+      .histview .hdel:hover { color: var(--destructive); }
+      .histview .hempty { text-align: center; color: var(--muted-fg); font-size: 13px; padding: 44px 24px; line-height: 1.5; }
+
+      .mic { flex: none; width: 32px; height: 32px; background: none; border: 1px solid var(--border); color: var(--muted-fg); cursor: pointer; display: grid; place-items: center; }
+      .mic svg { width: 16px; height: 16px; }
+      .mic.rec { color: var(--destructive); border-color: var(--destructive); }
     `;
 
     const host = document.createElement("div");
@@ -218,6 +234,7 @@
           <span class="title">Asistente LUMA</span>
           <span class="tag">Solo lectura</span>
           <span class="sp"></span>
+          <button class="ico hist" title="Historial">${ICON.history}</button>
           <button class="ico new" title="Nueva conversación">${ICON.newChat}</button>
           <button class="ico close" title="Cerrar">${ICON.close}</button>
         </header>
@@ -229,12 +246,14 @@
           </div>
           <div class="sugg"></div>
           <div class="conv" style="display:none" aria-live="polite"></div>
+          <div class="histview" style="display:none"></div>
         </div>
         <div class="chips"></div>
         <footer class="foot">
           <div class="inputcard">
             <div class="inputrow">
               <textarea rows="1" placeholder="Pregunta lo que necesites…"></textarea>
+              <button class="mic" title="Dictar por voz" style="display:none">${ICON.mic}</button>
               <button class="send" title="Enviar" disabled>${ICON.send}</button>
             </div>
             <div class="toolbar">
@@ -260,6 +279,9 @@
     const send = $(".send");
     const modelBtn = $(".tbtn.model");
     const modelMenu = $(".modelmenu");
+    const histBtn = $(".hist");
+    const histview = $(".histview");
+    const micBtn = $(".mic");
 
     const status = el("div", { class: "status" });
     status.innerHTML = ICON.loader + '<span class="slabel">Pensando…</span>';
@@ -274,6 +296,10 @@
     let turnHadText = false;
     let watchdog = null;
     let stderrBuf = [];
+    let transcript = [];        // C5: current thread, persisted to disk
+    let turnBotText = "";       // assistant text accumulated this turn
+    let currentThreadId = null; // stable id so re-saves overwrite the same file
+    let histOpen = false;
 
     ROLE.suggestions.forEach((text) => {
       const w = text.split(" ");
@@ -307,14 +333,42 @@
     setView("empty");
 
     launcher.addEventListener("click", openSidebar);
-    $(".close").addEventListener("click", () => sidebar.classList.remove("open"));
+    $(".close").addEventListener("click", () => { saveCurrentThread(); sidebar.classList.remove("open"); });
     $(".new").addEventListener("click", newConversation);
+    histBtn.addEventListener("click", () => (histOpen ? closeHistory() : openHistory()));
     send.addEventListener("click", () => (inFlight ? stopTurn() : submit()));
     modelBtn.addEventListener("click", (e) => { e.stopPropagation(); modelMenu.classList.toggle("open"); });
     root.addEventListener("click", (e) => { if (!modelBtn.contains(e.target) && !modelMenu.contains(e.target)) modelMenu.classList.remove("open"); });
     input.addEventListener("input", () => { autosize(); if (!inFlight) send.disabled = !input.value.trim(); });
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!inFlight) submit(); } });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sidebar.classList.contains("open")) sidebar.classList.remove("open"); });
+
+    // C6: voice dictation, ONLY if the WebView actually supports SpeechRecognition.
+    // WKWebView on macOS usually does not → the mic button stays hidden (never a
+    // dead control). Where supported, it fills the input; the OS handles the prompt.
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) {
+      micBtn.style.display = "grid";
+      let recog = null, recording = false;
+      micBtn.addEventListener("click", () => {
+        if (recording) { try { recog && recog.stop(); } catch (_) {} return; }
+        try {
+          recog = new SR();
+          recog.lang = "es-ES";
+          recog.interimResults = true;
+          recog.continuous = false;
+          recog.onresult = (ev) => {
+            let txt = "";
+            for (let i = 0; i < ev.results.length; i++) txt += ev.results[i][0].transcript;
+            input.value = txt; autosize(); if (!inFlight) send.disabled = !input.value.trim();
+          };
+          recog.onerror = () => { recording = false; micBtn.classList.remove("rec"); };
+          recog.onend = () => { recording = false; micBtn.classList.remove("rec"); input.focus(); };
+          recording = true; micBtn.classList.add("rec");
+          recog.start();
+        } catch (_) { recording = false; micBtn.classList.remove("rec"); }
+      });
+    }
 
     function onModelChange(m) {
       model = m.id;
@@ -343,11 +397,70 @@
       } catch (_) {}
     }
     function newConversation() {
+      saveCurrentThread();
       conv.querySelectorAll(".row-user, .bot, .sys, .meta").forEach((n) => n.remove());
-      botBuf = null;
+      botBuf = null; transcript = []; currentThreadId = null; turnBotText = "";
+      histview.style.display = "none"; histOpen = false;
       setTyping(false);
       setInFlight(false);
       setView("empty");
+    }
+
+    // ── C5: conversation history (persisted via Rust, file-based) ──────────────
+    function saveCurrentThread() {
+      if (!transcript.length) return;
+      const id = currentThreadId || String(Date.now());
+      const first = transcript.find((m) => m.role === "user");
+      const title = (first ? first.text : "Conversación").slice(0, 60);
+      invoke("history_save", { thread: { id, title, createdAt: new Date().toISOString(), messages: transcript.slice() } }).catch(() => {});
+    }
+    async function openHistory() {
+      histOpen = true;
+      empty.style.display = "none"; sugg.style.display = "none"; chips.style.display = "none"; conv.style.display = "none";
+      histview.style.display = "";
+      histview.innerHTML = '<div class="hempty">Cargando…</div>';
+      let metas = [];
+      try { metas = await invoke("history_list"); } catch (_) {}
+      if (!metas || !metas.length) { histview.innerHTML = '<div class="hempty">Sin conversaciones guardadas todavía.</div>'; return; }
+      histview.innerHTML = "";
+      metas.forEach((m) => {
+        const row = el("div", { class: "hrow" });
+        const meta = el("div", { class: "hmeta" });
+        meta.appendChild(el("div", { class: "htitle" }, m.title || "Conversación"));
+        meta.appendChild(el("div", { class: "hsub" }, fmtDate(m.createdAt) + " · " + m.count + " mensaje" + (m.count === 1 ? "" : "s")));
+        const del = el("button", { class: "hdel", title: "Eliminar" }); del.innerHTML = ICON.close;
+        row.appendChild(meta); row.appendChild(del);
+        meta.addEventListener("click", () => loadThread(m.id));
+        del.addEventListener("click", (e) => { e.stopPropagation(); deleteThread(m.id, row); });
+        histview.appendChild(row);
+      });
+    }
+    function closeHistory() { histOpen = false; histview.style.display = "none"; setView(view); }
+    async function loadThread(id) {
+      let t;
+      try { t = await invoke("history_load", { id }); } catch (_) { return; }
+      histOpen = false; histview.style.display = "none";
+      conv.querySelectorAll(".row-user, .bot, .sys, .meta").forEach((n) => n.remove());
+      botBuf = null;
+      setView("chat");
+      const msgs = t.messages || [];
+      transcript = msgs.slice();
+      currentThreadId = t.id;
+      msgs.forEach((mm) => {
+        if (mm.role === "user") { const r = el("div", { class: "row-user" }); r.appendChild(el("div", null, mm.text)); conv.insertBefore(r, status); }
+        else { const node = el("div", { class: "bot" }); node.innerHTML = renderMarkdown(mm.text); conv.insertBefore(node, status); }
+      });
+      scrollDown();
+    }
+    async function deleteThread(id, row) {
+      try { await invoke("history_delete", { id }); } catch (_) {}
+      row.remove();
+      if (id === currentThreadId) currentThreadId = null;
+      if (!histview.querySelector(".hrow")) histview.innerHTML = '<div class="hempty">Sin conversaciones guardadas todavía.</div>';
+    }
+    function fmtDate(iso) {
+      try { return new Date(iso).toLocaleString("es-ES", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); }
+      catch (_) { return String(iso || "").slice(0, 10); }
     }
     function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 130) + "px"; }
 
@@ -406,7 +519,9 @@
       if (inFlight) return;
       if (view !== "chat") setView("chat");
       msg("user", text);
+      if (!currentThreadId) currentThreadId = String(Date.now());
       turnHadText = false;
+      turnBotText = "";
       stderrBuf = [];
       setTyping(true, "Pensando…");
       setInFlight(true);
@@ -442,7 +557,7 @@
         botBuf = null; setTyping(false); setInFlight(false);
         if (m.subtype && m.subtype !== "success") sys("El asistente no pudo completar la respuesta (" + m.subtype + ")." + stderrTail(), true);
         else if (!turnHadText) sys("No obtuve respuesta. Inténtalo de nuevo." + stderrTail(), true);
-        else renderMeta(m); // C4
+        else { renderMeta(m); transcript.push({ role: "assistant", text: turnBotText }); saveCurrentThread(); } // C4 + C5
       } else if (m.type === "auth-expired") {
         started = false; setTyping(false); setInFlight(false);
         sys("Tu sesión con LUMA caducó. Cierra y reabre la app para reconectar.", true);
@@ -468,13 +583,14 @@
     function appendBot(text) {
       if (!botBuf) { const node = el("div", { class: "bot" }); conv.insertBefore(node, status); botBuf = { node, raw: "" }; }
       botBuf.raw += text;
+      turnBotText += text;
       botBuf.node.innerHTML = renderMarkdown(botBuf.raw);
       scrollDown();
     }
     function msg(kind, text) {
       botBuf = null;
       let node;
-      if (kind === "user") { node = el("div", { class: "row-user" }); node.appendChild(el("div", null, text)); }
+      if (kind === "user") { transcript.push({ role: "user", text }); node = el("div", { class: "row-user" }); node.appendChild(el("div", null, text)); }
       else node = el("div", { class: kind }, text);
       conv.insertBefore(node, status);
       scrollDown();

@@ -1,6 +1,6 @@
 [package]
 name = "luma-desktop"
-version = "0.1.8"
+version = "0.1.9"
 description = "LUMA Desktop"
 authors = ["Way To Grow"]
 edition = "2021"

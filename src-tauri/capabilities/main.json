@@ -16,6 +16,10 @@
     "allow-clear-luma-token",
     "allow-start-agent-session",
     "allow-send-message",
-    "allow-stop-agent-session"
+    "allow-stop-agent-session",
+    "allow-history-save",
+    "allow-history-list",
+    "allow-history-load",
+    "allow-history-delete"
   ]
 }
