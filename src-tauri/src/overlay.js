@@ -228,7 +228,7 @@
             <div class="edesc">${ROLE.desc}</div>
           </div>
           <div class="sugg"></div>
-          <div class="conv" style="display:none"></div>
+          <div class="conv" style="display:none" aria-live="polite"></div>
         </div>
         <div class="chips"></div>
         <footer class="foot">
@@ -273,6 +273,7 @@
     let inFlight = false;
     let turnHadText = false;
     let watchdog = null;
+    let stderrBuf = [];
 
     ROLE.suggestions.forEach((text) => {
       const w = text.split(" ");
@@ -351,12 +352,12 @@
     function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 130) + "px"; }
 
     listen("agent-event", (e) => handleAgentLine(e.payload));
+    // H: buffer stderr per turn; surface it only if a turn fails silently (no text).
+    // Kills boot-time noise from the claude binary AND keeps the real errors the old
+    // keyword regex used to drop (it's shown verbatim on an empty/failed turn).
     listen("agent-stderr", (e) => {
-      const line = String(e.payload || "");
-      // H: widened to catch network / rate-limit / DNS / TLS errors the old regex dropped.
-      if (/error|fail|denied|unauthor|invalid|enoent|cannot|no such|spawn|timeout|timed out|econnrefused|etimedout|getaddrinfo|enotfound|429|overloaded|rate.?limit|quota|too many|network|offline|enetunreach|certificate|tls|credential|login/i.test(line)) {
-        sys("⚙︎ " + line.slice(0, 240), true);
-      }
+      const line = String(e.payload || "").trim();
+      if (line) { stderrBuf.push(line); if (stderrBuf.length > 30) stderrBuf.shift(); }
     });
 
     async function ensureStarted() {
@@ -406,6 +407,7 @@
       if (view !== "chat") setView("chat");
       msg("user", text);
       turnHadText = false;
+      stderrBuf = [];
       setTyping(true, "Pensando…");
       setInFlight(true);
       await ensureStarted();
@@ -438,8 +440,8 @@
         if (usedTool && !text) setTyping(true, "Consultando datos…");
       } else if (m.type === "result") {
         botBuf = null; setTyping(false); setInFlight(false);
-        if (m.subtype && m.subtype !== "success") sys("El asistente no pudo completar la respuesta (" + m.subtype + "). Inténtalo de nuevo.", true);
-        else if (!turnHadText) sys("No obtuve respuesta. Inténtalo de nuevo.", true);
+        if (m.subtype && m.subtype !== "success") sys("El asistente no pudo completar la respuesta (" + m.subtype + ")." + stderrTail(), true);
+        else if (!turnHadText) sys("No obtuve respuesta. Inténtalo de nuevo." + stderrTail(), true);
         else renderMeta(m); // C4
       } else if (m.type === "auth-expired") {
         started = false; setTyping(false); setInFlight(false);
@@ -449,7 +451,7 @@
         sys("Error del asistente: " + (m.message || "desconocido"), true);
       } else if (m.type === "sidecar-exit") {
         started = false; setTyping(false); setInFlight(false);
-        sys("El asistente se cerró. Reábrelo para continuar.");
+        sys("El asistente se cerró." + (stderrTail() || " Reábrelo para continuar."), true);
       }
       if (inFlight) armWatchdog();
     }
@@ -497,10 +499,17 @@
     function armWatchdog() {
       clearWatchdog();
       watchdog = setTimeout(() => {
-        if (inFlight) { setTyping(false); setInFlight(false); sys("Sin respuesta. Comprueba tu conexión a internet e inténtalo de nuevo.", true); }
+        if (inFlight) { setTyping(false); setInFlight(false); sys("Sin respuesta. Comprueba tu conexión a internet e inténtalo de nuevo." + stderrTail(), true); }
       }, 45000);
     }
     function clearWatchdog() { if (watchdog) { clearTimeout(watchdog); watchdog = null; } }
+    function stderrTail() {
+      const errs = stderrBuf.filter((l) =>
+        /error|fail|denied|unauthor|invalid|enoent|cannot|no such|spawn|timeout|timed out|econnrefused|etimedout|getaddrinfo|enotfound|429|overloaded|rate.?limit|quota|network|offline|certificate|tls|credential|login/i.test(l)
+      );
+      const tail = (errs.length ? errs : stderrBuf).slice(-2).join(" · ");
+      return tail ? " Detalle: " + tail.slice(0, 200) : "";
+    }
     function scrollDown() { const b = $(".body"); b.scrollTop = b.scrollHeight; }
     function errMsg(err) { return err && err.message ? err.message : String(err); }
     function el(tag, attrs, text) {
