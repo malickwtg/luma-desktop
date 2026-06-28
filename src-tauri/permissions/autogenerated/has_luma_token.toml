@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-has-luma-token"
+description = "Enables the has_luma_token command without any pre-configured scope."
+commands.allow = ["has_luma_token"]
+
+[[permission]]
+identifier = "deny-has-luma-token"
+description = "Denies the has_luma_token command without any pre-configured scope."
+commands.deny = ["has_luma_token"]

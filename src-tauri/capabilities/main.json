@@ -6,5 +6,16 @@
   "remote": {
     "urls": ["https://luma.waytogrow.es/*"]
   },
-  "permissions": ["core:event:default"]
+  "permissions": [
+    "core:event:default",
+    "allow-get-platform",
+    "allow-check-claude-installed",
+    "allow-check-claude-auth",
+    "allow-store-luma-token",
+    "allow-has-luma-token",
+    "allow-clear-luma-token",
+    "allow-start-agent-session",
+    "allow-send-message",
+    "allow-stop-agent-session"
+  ]
 }

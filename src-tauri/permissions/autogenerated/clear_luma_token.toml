@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-luma-token"
+description = "Enables the clear_luma_token command without any pre-configured scope."
+commands.allow = ["clear_luma_token"]
+
+[[permission]]
+identifier = "deny-clear-luma-token"
+description = "Denies the clear_luma_token command without any pre-configured scope."
+commands.deny = ["clear_luma_token"]

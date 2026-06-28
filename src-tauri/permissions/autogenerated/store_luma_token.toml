@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-store-luma-token"
+description = "Enables the store_luma_token command without any pre-configured scope."
+commands.allow = ["store_luma_token"]
+
+[[permission]]
+identifier = "deny-store-luma-token"
+description = "Denies the store_luma_token command without any pre-configured scope."
+commands.deny = ["store_luma_token"]
