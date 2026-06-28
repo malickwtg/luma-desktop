@@ -41,6 +41,9 @@ impl AgentState {
 pub fn run() {
     tauri::Builder::default()
         .manage(AgentState::default())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_platform,
             commands::check_claude_installed,
@@ -66,6 +69,42 @@ pub fn run() {
                 .min_inner_size(1200.0, 700.0)
                 .initialization_script(include_str!("overlay.js"))
                 .build()?;
+
+            // Check for updates on startup; if one is available, prompt with a
+            // native dialog and (on accept) download, install, and relaunch.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+                use tauri_plugin_updater::UpdaterExt;
+                let updater = match handle.updater() {
+                    Ok(u) => u,
+                    Err(e) => {
+                        eprintln!("[updater] init failed: {e}");
+                        return;
+                    }
+                };
+                if let Ok(Some(update)) = updater.check().await {
+                    let install = handle
+                        .dialog()
+                        .message(format!(
+                            "Hay una nueva versión de LUMA ({}). ¿Instalarla ahora? La app se reiniciará.",
+                            update.version
+                        ))
+                        .title("Actualización disponible")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Instalar".to_string(),
+                            "Ahora no".to_string(),
+                        ))
+                        .blocking_show();
+                    if install {
+                        match update.download_and_install(|_, _| {}, || {}).await {
+                            Ok(()) => handle.restart(),
+                            Err(e) => eprintln!("[updater] install failed: {e}"),
+                        }
+                    }
+                }
+            });
+
             Ok(())
         })
         .on_window_event(|window, event| {

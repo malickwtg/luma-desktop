@@ -44,14 +44,21 @@ jobs:
       # Passing empty APPLE_* secrets makes the bundler attempt codesign and fail
       # ("failed to import keychain certificate"). To ship signed later, add the
       # APPLE_* / TAURI_SIGNING_* secrets and re-introduce them here as `env:`.
-      - name: Build & release (unsigned arm64 .dmg)
+      - name: Build & release (unsigned arm64 .dmg + updater)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signature (Tauri's own; independent of Apple codesigning).
+          # Required to produce signed update artifacts + latest.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "LUMA Desktop ${{ github.ref_name }}"
-          releaseBody: "Build arm64 sin firmar. macOS bloqueará al abrir: clic derecho sobre LUMA.app → Abrir. Carga luma.waytogrow.es con el asistente montado."
+          releaseBody: "Build arm64 sin firmar por Apple. Para abrir: arrastra LUMA.app a Aplicaciones y ejecuta `xattr -cr /Applications/LUMA.app`. Carga luma.waytogrow.es con el asistente; auto-update activado."
           releaseDraft: false
-          prerelease: true
+          # Full release (NOT prerelease) so the updater endpoint
+          # releases/latest/download/latest.json resolves.
+          prerelease: false
+          includeUpdaterJson: true
           args: "--target aarch64-apple-darwin"
