@@ -84,7 +84,13 @@
 
     // Stream sidecar events.
     listen("agent-event", (e) => handleAgentLine(e.payload));
-    listen("agent-stderr", () => {}); // diagnostics; kept quiet in the UI
+    // Surface error-like stderr from the sidecar/claude so failures are visible.
+    listen("agent-stderr", (e) => {
+      const line = String(e.payload || "");
+      if (/error|fail|denied|unauthor|invalid|enoent|cannot|no such|spawn/i.test(line)) {
+        sys("⚙︎ " + line.slice(0, 240));
+      }
+    });
 
     async function ensureStarted() {
       if (started || starting) return;

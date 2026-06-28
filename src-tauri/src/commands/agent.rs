@@ -1,7 +1,6 @@
 // Agent session lifecycle: spawn the Node sidecar (Claude Agent SDK), stream its
 // output to the WebView, forward user messages to its stdin, and stop it cleanly.
 
-use crate::commands::credentials::token_entry;
 use crate::AgentState;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -22,9 +21,12 @@ pub fn start_agent_session(window: Window, state: State<AgentState>) -> Result<(
         }
     }
 
-    let token = token_entry()?
-        .get_password()
-        .map_err(|_| "No hay token de LUMA. Conéctate primero.".to_string())?;
+    let token = {
+        let guard = state.token.lock().map_err(|_| "estado bloqueado")?;
+        guard
+            .clone()
+            .ok_or_else(|| "No hay token de LUMA. Conéctate primero.".to_string())?
+    };
 
     let mut cmd = build_sidecar_command();
     cmd.env("LUMA_MCP_URL", MCP_URL);

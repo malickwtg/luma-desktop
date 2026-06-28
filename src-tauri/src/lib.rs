@@ -19,10 +19,14 @@ use std::process::Child;
 use std::sync::Mutex;
 use tauri::{Manager, RunEvent, WindowEvent};
 
-/// Holds the running Node sidecar (the Claude Agent SDK host).
+/// Holds the running Node sidecar (the Claude Agent SDK host) and the in-memory
+/// read-only MCP token. The token is kept in the Rust process (NOT the OS
+/// keychain — ad-hoc-signed apps can't reliably read it back, and NOT the
+/// WebView) and re-provisioned each launch.
 #[derive(Default)]
 pub struct AgentState {
     pub child: Mutex<Option<Child>>,
+    pub token: Mutex<Option<String>>,
 }
 
 impl AgentState {
