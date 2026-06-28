@@ -27,6 +27,8 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - uses: oven-sh/setup-bun@v2
+
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.88.0
         with:
@@ -37,10 +39,25 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install JS deps
-        run: pnpm install --frozen-lockfile
+      - name: Install JS deps (app + sidecar)
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir sidecar install --frozen-lockfile
 
-      # No signing env vars → tauri builds an UNSIGNED (ad-hoc) .app + .dmg.
+      - name: Bundle sidecar (bun --compile) + claude binary as externalBin
+        run: |
+          mkdir -p src-tauri/binaries
+          bun build sidecar/src/index.mjs --compile \
+            --outfile src-tauri/binaries/luma-sidecar-aarch64-apple-darwin
+          chmod +x src-tauri/binaries/luma-sidecar-aarch64-apple-darwin
+          CLAUDE_BIN=$(find sidecar/node_modules -path "*claude-agent-sdk-darwin-arm64/claude" -type f | head -1)
+          if [ -z "$CLAUDE_BIN" ]; then echo "claude binary not found" >&2; exit 1; fi
+          cp "$CLAUDE_BIN" src-tauri/binaries/claude-aarch64-apple-darwin
+          chmod +x src-tauri/binaries/claude-aarch64-apple-darwin
+          ls -lh src-tauri/binaries
+
+      # No Apple signing → unsigned (ad-hoc) .app + .dmg. The bundled sidecar +
+      # claude binary are ad-hoc signed by the bundler too.
       # Passing empty APPLE_* secrets makes the bundler attempt codesign and fail
       # ("failed to import keychain certificate"). To ship signed later, add the
       # APPLE_* / TAURI_SIGNING_* secrets and re-introduce them here as `env:`.

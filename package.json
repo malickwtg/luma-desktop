@@ -1,6 +1,6 @@
 {
   "name": "luma-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "LUMA Desktop — Tauri shell that loads luma.waytogrow.es and bridges a Claude Agent SDK sidecar to the LUMA MCP.",
   "type": "module",

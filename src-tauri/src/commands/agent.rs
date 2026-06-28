@@ -26,14 +26,13 @@ pub fn start_agent_session(window: Window, state: State<AgentState>) -> Result<(
         .get_password()
         .map_err(|_| "No hay token de LUMA. Conéctate primero.".to_string())?;
 
-    let sidecar = sidecar_path()?;
-    let mut child = Command::new("node")
-        .arg(&sidecar)
-        .env("LUMA_MCP_URL", MCP_URL)
-        .env("LUMA_MCP_TOKEN", token)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut cmd = build_sidecar_command();
+    cmd.env("LUMA_MCP_URL", MCP_URL);
+    cmd.env("LUMA_MCP_TOKEN", token);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("No se pudo iniciar el asistente: {e}"))?;
 
@@ -77,20 +76,35 @@ pub fn stop_agent_session(state: State<AgentState>) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve the sidecar entry point. Dev: `../sidecar/src/index.mjs` next to the
-/// crate. Override with `LUMA_SIDECAR_PATH`. Release bundling (externalBin) is a
-/// follow-up (see README → Packaging).
-fn sidecar_path() -> Result<PathBuf, String> {
-    if let Ok(p) = std::env::var("LUMA_SIDECAR_PATH") {
-        return Ok(PathBuf::from(p));
+/// Build the Command that launches the sidecar.
+/// - Packaged app: the bun-compiled `luma-sidecar` externalBin sits next to the
+///   main executable, with the `claude` externalBin alongside (passed via
+///   LUMA_CLAUDE_PATH so the Agent SDK uses the bundled binary).
+/// - Dev: `node ../sidecar/src/index.mjs` (override with LUMA_SIDECAR_PATH); the
+///   SDK resolves its own claude from node_modules.
+fn build_sidecar_command() -> Command {
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    {
+        let sidecar = dir.join("luma-sidecar");
+        if sidecar.exists() {
+            let mut c = Command::new(&sidecar);
+            let claude = dir.join("claude");
+            if claude.exists() {
+                c.env("LUMA_CLAUDE_PATH", &claude);
+            }
+            return c;
+        }
     }
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(|p| p.join("sidecar").join("src").join("index.mjs"))
-        .ok_or("No se pudo resolver la ruta del sidecar")?;
-    if dev.exists() {
-        Ok(dev)
-    } else {
-        Err("No se encontró el sidecar. Define LUMA_SIDECAR_PATH.".into())
-    }
+    // Dev fallback.
+    let mjs = std::env::var("LUMA_SIDECAR_PATH").map(PathBuf::from).unwrap_or_else(|_| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|p| p.join("sidecar").join("src").join("index.mjs"))
+            .unwrap_or_default()
+    });
+    let mut c = Command::new("node");
+    c.arg(mjs);
+    c
 }

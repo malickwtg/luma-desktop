@@ -17,6 +17,9 @@ import { createInterface } from "node:readline";
 
 const MCP_URL = process.env.LUMA_MCP_URL;
 const MCP_TOKEN = process.env.LUMA_MCP_TOKEN;
+// Path to the bundled `claude` binary (set by Rust in the packaged app). In dev
+// it's unset and the SDK resolves its own binary from node_modules.
+const CLAUDE_PATH = process.env.LUMA_CLAUDE_PATH;
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -104,6 +107,7 @@ try {
     prompt: userMessages(),
     options: {
       systemPrompt: SYSTEM_PROMPT,
+      ...(CLAUDE_PATH ? { pathToClaudeCodeExecutable: CLAUDE_PATH } : {}),
       mcpServers: {
         luma: {
           type: "http",
