@@ -63,6 +63,7 @@ pub fn run() {
             commands::history_list,
             commands::history_load,
             commands::history_delete,
+            commands::confirm_invoice,
         ])
         .setup(|app| {
             // Create the main window pointing at the remote LUMA web, and inject

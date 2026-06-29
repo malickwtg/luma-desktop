@@ -12,8 +12,10 @@
 //     cannot run local Bash/Edit/Write/Read on the user's machine. Combined with
 //     the read-only MCP token, the agent can only READ LUMA data.
 
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
 
 const MCP_URL = process.env.LUMA_MCP_URL;
 const MCP_TOKEN = process.env.LUMA_MCP_TOKEN;
@@ -39,7 +41,7 @@ Tienes acceso a las herramientas del MCP de LUMA (prefijo mcp__luma__) para CONS
 Reglas:
 - Responde siempre en español, conciso y directo. El usuario es Dirección/Administración, no experto en IA. Nada de preámbulos.
 - Usa SIEMPRE los tools del MCP para obtener cifras — nunca inventes ni estimes datos. Si una herramienta falla o no devuelve nada, di exactamente qué buscaste y con qué filtros.
-- Esta sesión es de SOLO LECTURA: no puedes crear, editar ni borrar. Si te piden facturar, cobrar, crear una remesa, etc., explica brevemente que esa acción se hace desde la web de LUMA.
+- Para CONSULTAR usas los tools de LUMA (solo lectura); no tienes acceso de escritura directo. Para FACTURAR un ABT NO uses tools de LUMA: llama a propose_action con action="invoice_abt", entityId=<UUID del ABT> y humanSummary="Voy a facturar el ABT <nº> de <cliente> por <importe> € (IVA incl.). Se creará la factura BORRADOR." y luego DETENTE — el usuario lo confirma en pantalla; no afirmes que está hecho hasta que el sistema te lo confirme. Para otras escrituras (cobrar, remesa) di que se hacen desde la web por ahora.
 - Formatea listas y cifras con tablas markdown. Importes en euros con dos decimales; alinea los números a la derecha con la sintaxis \`---:\`.
 
 Informes compuestos (encadena varios tools en un solo turno y fúndelos en UN informe con tablas):
@@ -97,15 +99,60 @@ rl.on("close", () => {
   }
 });
 
-// ── Tool gate: ONLY LUMA MCP tools. Deny local Bash/Edit/Write/etc. ──────────
+// ── Local "propose" tool: lets the agent PROPOSE a write (e.g. facturar un ABT)
+// WITHOUT being able to execute it. The handler only emits a {type:"propose"}
+// event to the WebView; the human confirms in a native dialog and the WebView
+// (same-origin, logged in) performs the actual write via /api/desktop/abt/[id]/invoice.
+// The agent itself has NO write capability — canUseTool below is the boundary.
+const desktopServer = createSdkMcpServer({
+  name: "desktop",
+  version: "1.0.0",
+  tools: [
+    tool(
+      "propose_action",
+      "Propone una acción de ESCRITURA (p.ej. facturar un ABT) para que el usuario la confirme en pantalla. NO ejecuta nada: solo muestra la propuesta. Tras llamarla, DETENTE y espera la confirmación del usuario.",
+      {
+        action: z.string().describe("Identificador de la acción, p.ej. 'invoice_abt'"),
+        entityId: z.string().describe("UUID de la entidad afectada (p.ej. el ABT)"),
+        humanSummary: z
+          .string()
+          .describe("Frase clara para el usuario: qué se hará, importe y cliente"),
+        amount: z.number().optional().describe("Importe total con IVA, si aplica"),
+        customer: z.string().optional().describe("Nombre del cliente, si aplica"),
+      },
+      async (args) => {
+        send({
+          type: "propose",
+          proposalId: randomUUID(),
+          action: args.action,
+          entityId: args.entityId,
+          humanSummary: args.humanSummary,
+          amount: typeof args.amount === "number" ? args.amount : null,
+          customer: args.customer ?? null,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Propuesta enviada al usuario para que la confirme en pantalla. Detente aquí y espera; NO asumas que se ha ejecutado.",
+            },
+          ],
+        };
+      },
+    ),
+  ],
+});
+
+// ── Tool gate: ONLY LUMA MCP read tools + the local propose tool. Everything else
+// (Bash/Edit/Write, any other MCP tool) is denied — the agent cannot write directly.
 const canUseTool = async (toolName, input) => {
-  if (toolName.startsWith("mcp__luma__")) {
+  if (toolName.startsWith("mcp__luma__") || toolName === "mcp__desktop__propose_action") {
     return { behavior: "allow", updatedInput: input };
   }
   return {
     behavior: "deny",
     message:
-      "Sesión de solo lectura sobre LUMA: solo se permiten consultas al MCP de LUMA.",
+      "Solo se permiten consultas al MCP de LUMA y propose_action. Para escribir, usa propose_action.",
   };
 };
 
@@ -145,6 +192,7 @@ try {
           url: MCP_URL,
           headers: { Authorization: `Bearer ${MCP_TOKEN}` },
         },
+        desktop: desktopServer,
       },
       canUseTool,
       // Strip the local agent tools from context entirely (defense in depth).

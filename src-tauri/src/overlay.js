@@ -223,6 +223,17 @@
       .mic { flex: none; width: 32px; height: 32px; background: none; border: 1px solid var(--border); color: var(--muted-fg); cursor: pointer; display: grid; place-items: center; }
       .mic svg { width: 16px; height: 16px; }
       .mic.rec { color: var(--destructive); border-color: var(--destructive); }
+
+      .proposal { align-self: stretch; border: 1px solid var(--border); background: var(--accent); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+      .proposal.done { border-color: var(--pos); }
+      .proposal.err { border-color: var(--destructive); }
+      .proposal.cancelled { opacity: .65; }
+      .proposal .pbody { font-size: 13.5px; line-height: 1.5; }
+      .proposal .pactions { display: flex; align-items: center; gap: 12px; }
+      .proposal .pconfirm { background: var(--primary); color: var(--primary-fg); border: none; padding: 8px 14px; cursor: pointer; font-family: inherit; font-size: 13px; }
+      .proposal .pstate { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted-fg); }
+      .proposal .pstate svg { width: 14px; height: 14px; animation: luma-spin 1s linear infinite; }
+      .proposal .plink { color: var(--fg); text-decoration: underline; font-size: 13px; }
     `;
 
     const host = document.createElement("div");
@@ -559,6 +570,9 @@
         if (text) { setTyping(false); turnHadText = true; appendBot(text); }
         const usedTool = m.message.content.some((b) => b.type === "tool_use");
         if (usedTool && !text) setTyping(true, "Consultando datos…");
+      } else if (m.type === "propose") {
+        setTyping(false);
+        renderProposal(m);
       } else if (m.type === "result") {
         botBuf = null; setTyping(false); setInFlight(false);
         if (m.subtype && m.subtype !== "success") sys("El asistente no pudo completar la respuesta (" + m.subtype + ")." + stderrTail(), true);
@@ -588,6 +602,79 @@
       if (toks) parts.push("~" + Math.round(toks / 100) / 10 + "k tokens");
       if (typeof m.total_cost_usd === "number" && m.total_cost_usd > 0) parts.push(m.total_cost_usd.toFixed(3) + " $");
       if (parts.length) conv.insertBefore(el("div", { class: "meta" }, parts.join(" · ")), status);
+    }
+
+    // PR2: a proposed money write (the agent can only PROPOSE; the human confirms
+    // in a NATIVE dialog and the WebView executes via the session cookie).
+    function renderProposal(m) {
+      botBuf = null;
+      if (view !== "chat") setView("chat");
+      const card = el("div", { class: "proposal" });
+      const body = el("div", { class: "pbody" }, m.humanSummary || "Acción propuesta");
+      const actions = el("div", { class: "pactions" });
+      const confirm = el("button", { class: "pconfirm" }, "Revisar y confirmar");
+      confirm.addEventListener("click", () => onConfirm(card, m, body, actions));
+      actions.appendChild(confirm);
+      card.appendChild(body);
+      card.appendChild(actions);
+      conv.insertBefore(card, status);
+      scrollDown();
+    }
+    async function onConfirm(card, m, body, actions) {
+      // The native dialog is the commit — not spoofable by the remote web.
+      let ok = false;
+      try { ok = await invoke("confirm_invoice", { summary: m.humanSummary || "¿Facturar este ABT?" }); }
+      catch (_) { ok = false; }
+      if (!ok) {
+        actions.remove();
+        card.classList.add("cancelled");
+        body.textContent = "Cancelado — no se ha facturado.";
+        reinject("[sistema] El usuario canceló la propuesta. No se ha facturado.");
+        return;
+      }
+      await executeProposal(card, m, body, actions);
+    }
+    async function executeProposal(card, m, body, actions) {
+      card.classList.remove("err");
+      actions.innerHTML = "";
+      const spin = el("div", { class: "pstate" });
+      spin.innerHTML = ICON.loader + "<span>Facturando…</span>";
+      actions.appendChild(spin);
+      try {
+        const resp = await fetch("/api/desktop/abt/" + encodeURIComponent(m.entityId) + "/invoice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Luma-Desktop": "1" },
+          body: JSON.stringify({ confirmId: m.proposalId }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        actions.innerHTML = "";
+        if (resp.ok) {
+          card.classList.add("done");
+          body.textContent = "✓ Factura borrador creada.";
+          if (data.id) {
+            actions.appendChild(el("a", { class: "plink", href: "/facturacion/" + data.id }, "Abrir en LUMA"));
+          }
+          reinject("[sistema] El usuario confirmó. Factura borrador creada correctamente.");
+          return;
+        }
+        card.classList.add("err");
+        const msg = resp.status === 409
+          ? "Este ABT ya se facturó (quizá desde otra pantalla)."
+          : (data && data.error) || ("No se pudo facturar (" + resp.status + ").");
+        body.textContent = msg;
+        reinject("[sistema] No se pudo facturar: " + msg);
+      } catch (_) {
+        // Network failure → safe retry: the same confirmId is idempotent (no doble factura).
+        actions.innerHTML = "";
+        body.textContent = "No se pudo completar. Comprueba tu conexión.";
+        const retry = el("button", { class: "pconfirm" }, "Reintentar");
+        retry.addEventListener("click", () => executeProposal(card, m, body, actions));
+        actions.appendChild(retry);
+      }
+    }
+    function reinject(text) {
+      if (!started) return;
+      invoke("send_message", { message: text }).catch(() => {});
     }
     function appendBot(text) {
       if (!botBuf) { const node = el("div", { class: "bot" }); conv.insertBefore(node, status); botBuf = { node, raw: "" }; }

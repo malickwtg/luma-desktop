@@ -18,6 +18,7 @@ fn main() {
             "history_list",
             "history_load",
             "history_delete",
+            "confirm_invoice",
         ])),
     )
     .expect("failed to run tauri-build");
