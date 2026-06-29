@@ -103,6 +103,29 @@
       document.head.appendChild(f);
     }
 
+    // Push the LUMA page aside (instead of covering it) while the panel is docked.
+    // The page lives in THIS same WebView, so we can't resize a separate native
+    // view — instead we narrow <body> to the remaining width and give it a
+    // transform, which makes even LUMA's fixed navbar/sidebar reflow into that
+    // width (a transform makes <body> the containing block for its fixed
+    // descendants). The chat host hangs off <html> (sibling of <body>), so it is
+    // NOT contained by that transform and stays pinned to the real viewport edge.
+    if (!document.getElementById("luma-desktop-push-style")) {
+      const ps = document.createElement("style");
+      ps.id = "luma-desktop-push-style";
+      ps.textContent = `
+        html.luma-assistant-pushed { overflow-x: hidden; }
+        html.luma-assistant-pushed > body {
+          width: calc(100% - var(--luma-push, 0px)) !important;
+          max-width: calc(100% - var(--luma-push, 0px)) !important;
+          transform: translateZ(0);
+          transition: width .24s cubic-bezier(.2,.8,.2,1), max-width .24s cubic-bezier(.2,.8,.2,1);
+        }
+        html.luma-resizing > body { transition: none !important; }
+      `;
+      document.head.appendChild(ps);
+    }
+
     const CSS = `
       :host {
         --bg:#ffffff; --fg:#121212; --card:#f7f6f1; --secondary:#e6e4dd; --accent:#f1efea;
@@ -305,7 +328,10 @@
         </footer>
       </aside>
     `;
-    document.body.appendChild(host);
+    // Append to <html> (sibling of <body>), NOT into <body>: the page-push below
+    // puts a transform on <body>, which would otherwise capture this fixed host
+    // and drag the panel off the real viewport edge.
+    document.documentElement.appendChild(host);
 
     const $ = (s) => root.querySelector(s);
     const launcher = $(".launcher");
@@ -332,9 +358,27 @@
     // ── Resizable width (drag the left edge) + expand/compact toggle. Persisted. ──
     const MIN_W = 360;
     const maxW = () => Math.min(window.innerWidth - 80, 1000);
+    // Below this remaining width LUMA gets unusable, so we stop pushing and let the
+    // panel overlay (drawer-style) instead — keeps small windows sane.
+    const MIN_ROOM = 640;
+    // Push LUMA's <body> aside by the current panel width while the panel is open,
+    // as long as there's room; otherwise fall back to overlay.
+    function applyPush() {
+      const docEl = document.documentElement;
+      const open = sidebar.classList.contains("open");
+      const w = sidebar.getBoundingClientRect().width || 404;
+      if (open && window.innerWidth - w >= MIN_ROOM) {
+        docEl.style.setProperty("--luma-push", Math.round(w) + "px");
+        docEl.classList.add("luma-assistant-pushed");
+      } else {
+        docEl.classList.remove("luma-assistant-pushed");
+        docEl.style.removeProperty("--luma-push");
+      }
+    }
     function setWidth(w, persist) {
       const clamped = Math.max(MIN_W, Math.min(maxW(), Math.round(w)));
       sidebar.style.width = clamped + "px";
+      applyPush();
       if (persist) { try { localStorage.setItem("luma-desktop-width", String(clamped)); } catch (_) {} }
     }
     try {
@@ -344,6 +388,7 @@
     let resizing = false;
     resizer.addEventListener("pointerdown", (e) => {
       resizing = true;
+      document.documentElement.classList.add("luma-resizing"); // no transition lag while dragging
       try { resizer.setPointerCapture(e.pointerId); } catch (_) {}
       e.preventDefault();
     });
@@ -351,12 +396,15 @@
     resizer.addEventListener("pointerup", () => {
       if (!resizing) return;
       resizing = false;
+      document.documentElement.classList.remove("luma-resizing");
       setWidth(sidebar.getBoundingClientRect().width, true);
     });
     expandBtn.addEventListener("click", () => {
       const cur = sidebar.getBoundingClientRect().width;
       setWidth(cur < 560 ? 760 : 404, true);
     });
+    // Window resized → re-clamp width to the new bounds and re-evaluate the push.
+    window.addEventListener("resize", () => { setWidth(sidebar.getBoundingClientRect().width, false); });
 
     let started = false;
     let starting = false;
@@ -403,7 +451,7 @@
     setView("empty");
 
     launcher.addEventListener("click", openSidebar);
-    $(".close").addEventListener("click", () => { saveCurrentThread(); sidebar.classList.remove("open"); });
+    $(".close").addEventListener("click", () => { saveCurrentThread(); sidebar.classList.remove("open"); applyPush(); });
     $(".new").addEventListener("click", newConversation);
     histBtn.addEventListener("click", () => (histOpen ? closeHistory() : openHistory()));
     send.addEventListener("click", () => (inFlight ? stopTurn() : submit()));
@@ -411,7 +459,7 @@
     root.addEventListener("click", (e) => { if (!modelBtn.contains(e.target) && !modelMenu.contains(e.target)) modelMenu.classList.remove("open"); });
     input.addEventListener("input", () => { autosize(); if (!inFlight) send.disabled = !input.value.trim(); });
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!inFlight) submit(); } });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sidebar.classList.contains("open")) sidebar.classList.remove("open"); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && sidebar.classList.contains("open")) { sidebar.classList.remove("open"); applyPush(); } });
 
     // C6: voice dictation, ONLY if the WebView actually supports SpeechRecognition.
     // WKWebView on macOS usually does not → the mic button stays hidden (never a
@@ -455,6 +503,7 @@
 
     function openSidebar() {
       sidebar.classList.add("open");
+      applyPush();
       ensureStarted();
       setTimeout(() => input.focus(), 200);
       // C2: morning briefing, auto once per calendar day.
