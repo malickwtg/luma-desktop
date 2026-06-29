@@ -42,6 +42,7 @@
     send: stroke('<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>'),
     stop: stroke('<rect width="11" height="11" x="6.5" y="6.5" rx="1.5"/>'),
     chevron: stroke('<path d="m6 9 6 6 6-6"/>'),
+    expand: stroke('<path d="m9 7-5 5 5 5"/><path d="m15 7 5 5-5 5"/>'),
     bot: stroke('<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>'),
     loader: stroke('<path d="M21 12a9 9 0 1 1-6.219-8.56"/>'),
     receipt: stroke('<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 17.5v-11"/>'),
@@ -210,6 +211,27 @@
       .modelmenu .ml { font-size: 12px; font-weight: 500; color: var(--fg); }
       .modelmenu .md { font-size: 10px; color: var(--muted-fg); margin-top: 1px; }
 
+      /* Resize handle on the docked (left) edge. */
+      .resizer { position: absolute; left: 0; top: 0; width: 6px; height: 100%; cursor: ew-resize; z-index: 6; }
+      .resizer:hover { background: var(--border); }
+
+      /* KPI cards (luma:cards directive). */
+      .bot .kcards { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 10px; }
+      .bot .kcard { flex: 1 1 30%; min-width: 92px; border: 1px solid var(--border); background: var(--card); padding: 10px 12px; }
+      .bot .klabel { font-size: 11px; color: var(--muted-fg); }
+      .bot .kvalue { font-family: var(--mono); font-size: 20px; font-weight: 500; letter-spacing: -.01em; margin-top: 4px; color: var(--fg); }
+      .bot .kdelta { font-family: var(--mono); font-size: 11px; margin-top: 2px; }
+      .bot .kdelta.pos { color: var(--pos); }
+      .bot .kdelta.neg { color: var(--destructive); }
+
+      /* Mini bar chart (luma:chart directive). */
+      .bot .chart { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 10px; }
+      .bot .crow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+      .bot .clabel { flex: none; width: 96px; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bot .cbar { flex: 1; height: 8px; background: var(--accent); }
+      .bot .cbar i { display: block; height: 100%; background: var(--primary); }
+      .bot .cval { flex: none; font-family: var(--mono); text-align: right; min-width: 72px; }
+
       .histview .hrow { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
       .histview .hrow:hover { background: var(--accent); }
       .histview .hmeta { flex: 1; min-width: 0; }
@@ -244,11 +266,13 @@
       <style>${CSS}</style>
       <button class="launcher" title="Asistente LUMA" aria-label="Asistente LUMA">${burst(24)}</button>
       <aside class="sidebar" role="dialog" aria-label="Asistente LUMA">
+        <div class="resizer" title="Arrastra para ajustar el ancho"></div>
         <header class="head">
           <span class="brand">${burst(18)}</span>
           <span class="title">Asistente LUMA</span>
-          <span class="tag">Solo lectura</span>
+          <span class="tag">Dirección</span>
           <span class="sp"></span>
+          <button class="ico expand" title="Ancho">${ICON.expand}</button>
           <button class="ico hist" title="Historial">${ICON.history}</button>
           <button class="ico new" title="Nueva conversación">${ICON.newChat}</button>
           <button class="ico close" title="Cerrar">${ICON.close}</button>
@@ -297,11 +321,42 @@
     const histBtn = $(".hist");
     const histview = $(".histview");
     const micBtn = $(".mic");
+    const resizer = $(".resizer");
+    const expandBtn = $(".expand");
 
     const status = el("div", { class: "status" });
     status.innerHTML = ICON.loader + '<span class="slabel">Pensando…</span>';
     const statusLabel = status.querySelector(".slabel");
     conv.appendChild(status);
+
+    // ── Resizable width (drag the left edge) + expand/compact toggle. Persisted. ──
+    const MIN_W = 360;
+    const maxW = () => Math.min(window.innerWidth - 80, 1000);
+    function setWidth(w, persist) {
+      const clamped = Math.max(MIN_W, Math.min(maxW(), Math.round(w)));
+      sidebar.style.width = clamped + "px";
+      if (persist) { try { localStorage.setItem("luma-desktop-width", String(clamped)); } catch (_) {} }
+    }
+    try {
+      const saved = parseInt(localStorage.getItem("luma-desktop-width") || "", 10);
+      if (saved) setWidth(saved, false);
+    } catch (_) {}
+    let resizing = false;
+    resizer.addEventListener("pointerdown", (e) => {
+      resizing = true;
+      try { resizer.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+    });
+    resizer.addEventListener("pointermove", (e) => { if (resizing) setWidth(window.innerWidth - e.clientX, false); });
+    resizer.addEventListener("pointerup", () => {
+      if (!resizing) return;
+      resizing = false;
+      setWidth(sidebar.getBoundingClientRect().width, true);
+    });
+    expandBtn.addEventListener("click", () => {
+      const cur = sidebar.getBoundingClientRect().width;
+      setWidth(cur < 560 ? 760 : 404, true);
+    });
 
     let started = false;
     let starting = false;
@@ -835,12 +890,57 @@
       flushPara(); closeLists();
       return out;
     }
+    // Dashboard directives the agent can emit inside fenced blocks:
+    //   ```luma:cards [{"label":"Facturado","value":"128.940 €","delta":"+12%"}]```
+    //   ```luma:chart {"data":[{"label":"Ene","value":12000}],"unit":"€"}```
+    function renderCards(json) {
+      let arr;
+      try { arr = JSON.parse(json); } catch { return "<pre><code>" + escapeHtml(json) + "</code></pre>"; }
+      if (!Array.isArray(arr) || !arr.length) return "";
+      const card = (c) => {
+        let delta = "";
+        if (c && c.delta != null && String(c.delta) !== "") {
+          const d = String(c.delta);
+          const neg = /^\s*[-−]/.test(d) || /baj|menos|caíd/i.test(d);
+          delta = '<div class="kdelta ' + (neg ? "neg" : "pos") + '">' + escapeHtml(d) + "</div>";
+        }
+        return (
+          '<div class="kcard"><div class="klabel">' + escapeHtml(String((c && c.label) ?? "")) +
+          '</div><div class="kvalue">' + escapeHtml(String((c && c.value) ?? "")) + "</div>" + delta + "</div>"
+        );
+      };
+      return '<div class="kcards">' + arr.slice(0, 6).map(card).join("") + "</div>";
+    }
+    function renderChart(json) {
+      let cfg;
+      try { cfg = JSON.parse(json); } catch { return "<pre><code>" + escapeHtml(json) + "</code></pre>"; }
+      const data = Array.isArray(cfg && cfg.data) ? cfg.data.slice(0, 12) : [];
+      if (!data.length) return "";
+      const max = Math.max(...data.map((d) => Math.abs(Number(d && d.value) || 0)), 1);
+      const unit = cfg.unit ? " " + escapeHtml(String(cfg.unit)) : "";
+      const rows = data.map((d) => {
+        const pct = Math.round((Math.abs(Number(d && d.value) || 0) / max) * 100);
+        return (
+          '<div class="crow"><span class="clabel">' + escapeHtml(String((d && d.label) ?? "")) +
+          '</span><span class="cbar"><i style="width:' + pct + '%"></i></span>' +
+          '<span class="cval">' + escapeHtml(String((d && d.value) ?? "")) + unit + "</span></div>"
+        );
+      });
+      return '<div class="chart">' + rows.join("") + "</div>";
+    }
     function renderMarkdown(src) {
       const parts = src.split("```");
       let html = "";
       parts.forEach((part, i) => {
-        if (i % 2 === 1) { const body = part.replace(/^[a-zA-Z0-9_+-]*\n/, ""); html += "<pre><code>" + escapeHtml(body) + "</code></pre>"; }
-        else html += renderSegment(part);
+        if (i % 2 === 1) {
+          // Tolerate both ```lang\nbody``` and inline ```lang body``` forms.
+          const mm = part.match(/^([a-zA-Z0-9_:+-]*)(?:[ \t]*\r?\n)?([\s\S]*)$/);
+          const lang = mm ? mm[1] : "";
+          const body = mm ? mm[2] : part;
+          if (lang === "luma:cards") html += renderCards(body);
+          else if (lang === "luma:chart") html += renderChart(body);
+          else html += "<pre><code>" + escapeHtml(body) + "</code></pre>";
+        } else html += renderSegment(part);
       });
       return html;
     }
