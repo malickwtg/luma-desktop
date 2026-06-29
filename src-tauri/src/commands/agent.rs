@@ -74,6 +74,20 @@ pub fn start_agent_session(
     Ok(())
 }
 
+/// Forward a write-confirmation decision to the running sidecar's stdin so its
+/// canUseTool gate can allow (true) or deny (false) the pending tool call. No
+/// write tool ever executes without the human's explicit OK in the native dialog.
+#[tauri::command]
+pub fn respond_confirm(id: String, allow: bool, state: State<AgentState>) -> Result<(), String> {
+    let mut guard = state.child.lock().map_err(|_| "estado bloqueado")?;
+    let child = guard.as_mut().ok_or("El asistente no está iniciado")?;
+    let stdin = child.stdin.as_mut().ok_or("stdin no disponible")?;
+    let payload =
+        serde_json::json!({ "type": "confirm-response", "id": id, "allow": allow }).to_string();
+    writeln!(stdin, "{payload}").map_err(|e| e.to_string())?;
+    stdin.flush().map_err(|e| e.to_string())
+}
+
 /// Forward a user message to the running sidecar's stdin.
 #[tauri::command]
 pub fn send_message(message: String, state: State<AgentState>) -> Result<(), String> {

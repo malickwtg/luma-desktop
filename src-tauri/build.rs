@@ -13,12 +13,14 @@ fn main() {
             "clear_luma_token",
             "start_agent_session",
             "send_message",
+            "respond_confirm",
             "stop_agent_session",
             "history_save",
             "history_list",
             "history_load",
             "history_delete",
             "confirm_invoice",
+            "confirm_action",
         ])),
     )
     .expect("failed to run tauri-build");

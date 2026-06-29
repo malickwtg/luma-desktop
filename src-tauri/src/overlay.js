@@ -494,9 +494,15 @@
       try {
         const hasToken = await invoke("has_luma_token");
         if (!hasToken) {
+          // Ensure the version is resolved before provisioning (it gates write access).
+          if (!APP_VERSION) {
+            try { APP_VERSION = String((await invoke("get_app_version")) || ""); } catch (_) {}
+          }
           const resp = await fetch("/api/desktop/provision-token", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ deviceLabel: "LUMA Desktop" }),
+            // appVersion gates write access server-side: only this gated build
+            // (with the native write-confirmation in canUseTool) gets a write token.
+            body: JSON.stringify({ deviceLabel: "LUMA Desktop", appVersion: APP_VERSION }),
           });
           if (resp.status === 404) { sys("Esta versión de LUMA aún no soporta el asistente de escritorio. Actualiza LUMA e inténtalo de nuevo."); starting = false; return; }
           if (resp.status === 403) { sys("El asistente de escritorio está disponible solo para Dirección en esta versión."); starting = false; return; }
@@ -573,6 +579,8 @@
       } else if (m.type === "propose") {
         setTyping(false);
         renderProposal(m);
+      } else if (m.type === "confirm-request") {
+        handleConfirmRequest(m);
       } else if (m.type === "result") {
         botBuf = null; setTyping(false); setInFlight(false);
         if (m.subtype && m.subtype !== "success") sys("El asistente no pudo completar la respuesta (" + m.subtype + ")." + stderrTail(), true);
@@ -591,7 +599,39 @@
         sys("El asistente se cerró." + (stderrTail() || " Reábrelo para continuar."), true);
         reportError("sidecar-exit", stderrTail());
       }
-      if (inFlight) armWatchdog();
+      if (inFlight && m.type !== "confirm-request") armWatchdog();
+    }
+
+    // Goal: the agent can perform ANY MCP write, but each one is gated HERE by a
+    // native confirmation (the sidecar's canUseTool blocks the tool until we answer).
+    function prettyTool(t) {
+      return String(t || "acción").replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+    }
+    function humanizeWrite(toolName, input) {
+      const lines = ["El asistente quiere ejecutar:", "", "  " + prettyTool(toolName), ""];
+      try {
+        const obj = input && typeof input === "object" ? input : {};
+        for (const k of Object.keys(obj).slice(0, 12)) {
+          let v = obj[k];
+          if (v == null || v === "") continue;
+          if (typeof v === "object") v = JSON.stringify(v);
+          v = String(v);
+          if (v.length > 80) v = v.slice(0, 80) + "…";
+          lines.push("  " + k + ": " + v);
+        }
+      } catch (_) {}
+      lines.push("", "¿Permitir esta acción?");
+      return lines.join("\n");
+    }
+    async function handleConfirmRequest(m) {
+      clearWatchdog();
+      setTyping(false);
+      let allow = false;
+      try { allow = await invoke("confirm_action", { summary: humanizeWrite(m.toolName, m.input) }); }
+      catch (_) { allow = false; }
+      try { await invoke("respond_confirm", { id: m.id, allow }); } catch (_) {}
+      sys((allow ? "✓ Permitido: " : "✕ Cancelado: ") + prettyTool(m.toolName));
+      if (allow && inFlight) { setTyping(true, "Ejecutando…"); armWatchdog(); }
     }
 
     function renderMeta(m) {

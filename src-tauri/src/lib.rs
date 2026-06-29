@@ -58,12 +58,14 @@ pub fn run() {
             commands::clear_luma_token,
             commands::start_agent_session,
             commands::send_message,
+            commands::respond_confirm,
             commands::stop_agent_session,
             commands::history_save,
             commands::history_list,
             commands::history_load,
             commands::history_delete,
             commands::confirm_invoice,
+            commands::confirm_action,
         ])
         .setup(|app| {
             // Create the main window pointing at the remote LUMA web, and inject

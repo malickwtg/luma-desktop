@@ -20,3 +20,20 @@ pub fn confirm_invoice(app: AppHandle, summary: String) -> bool {
         ))
         .blocking_show()
 }
+
+/// Generic native confirmation for ANY write the assistant wants to perform
+/// (create/update/delete/invoice/...). The agent can NEVER write without this
+/// explicit OK: the sidecar's canUseTool blocks every write tool until the human
+/// confirms here. Returns true only on explicit confirm.
+#[tauri::command]
+pub fn confirm_action(app: AppHandle, summary: String) -> bool {
+    app.dialog()
+        .message(summary)
+        .title("Confirmar acción del asistente")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Permitir".to_string(),
+            "Cancelar".to_string(),
+        ))
+        .blocking_show()
+}

@@ -41,7 +41,8 @@ Tienes acceso a las herramientas del MCP de LUMA (prefijo mcp__luma__) para CONS
 Reglas:
 - Responde siempre en español, conciso y directo. El usuario es Dirección/Administración, no experto en IA. Nada de preámbulos.
 - Usa SIEMPRE los tools del MCP para obtener cifras — nunca inventes ni estimes datos. Si una herramienta falla o no devuelve nada, di exactamente qué buscaste y con qué filtros.
-- Para CONSULTAR usas los tools de LUMA (solo lectura); no tienes acceso de escritura directo. Para FACTURAR un ABT NO uses tools de LUMA: llama a propose_action con action="invoice_abt", entityId=<UUID del ABT> y humanSummary="Voy a facturar el ABT <nº> de <cliente> por <importe> € (IVA incl.). Se creará la factura BORRADOR." y luego DETENTE — el usuario lo confirma en pantalla; no afirmes que está hecho hasta que el sistema te lo confirme. Para otras escrituras (cobrar, remesa) di que se hacen desde la web por ahora.
+- Puedes CONSULTAR y también REALIZAR ESCRITURAS (crear/editar/borrar clientes, presupuestos, pedidos, incidencias/avisos; facturar; cobrar; remesas; etc.) con los tools del MCP de LUMA. CLAVE: cada escritura PIDE CONFIRMACIÓN al usuario en un diálogo del sistema ANTES de ejecutarse — tú solo solicitas la herramienta, el usuario aprueba o cancela. NO afirmes que algo se ha hecho hasta que el resultado del tool lo confirme. Si el usuario cancela recibirás un error de cancelación: reconócelo con naturalidad y NO reintentes a ciegas.
+- Antes de una escritura con efecto importante (facturar, cobrar, remesa, borrar, dar de alta), resume en UNA frase qué vas a hacer (entidad, importe, cliente) para que el usuario sepa exactamente qué confirma. Para crear cosas, reúne primero los datos mínimos necesarios; si falta algo imprescindible, pregúntalo antes de llamar al tool.
 - Formatea listas y cifras con tablas markdown. Importes en euros con dos decimales; alinea los números a la derecha con la sintaxis \`---:\`.
 
 Informes compuestos (encadena varios tools en un solo turno y fúndelos en UN informe con tablas):
@@ -55,6 +56,9 @@ Para preguntas simples, una sola herramienta basta — no sobre-consultes.`;
 const pending = [];
 let wake = null;
 let closed = false;
+// Pending write-confirmations, keyed by id. Resolved when the WebView sends a
+// {type:"confirm-response", id, allow} line back (via the respond_confirm command).
+const pendingConfirms = new Map();
 
 async function* userMessages() {
   while (true) {
@@ -86,6 +90,10 @@ rl.on("line", (line) => {
   try {
     const msg = JSON.parse(trimmed);
     if (msg.type === "user" && typeof msg.text === "string") pushUser(msg.text);
+    else if (msg.type === "confirm-response" && typeof msg.id === "string") {
+      const cb = pendingConfirms.get(msg.id);
+      if (cb) cb(!!msg.allow);
+    }
   } catch {
     // ignore non-JSON control lines
   }
@@ -143,17 +151,57 @@ const desktopServer = createSdkMcpServer({
   ],
 });
 
-// ── Tool gate: ONLY LUMA MCP read tools + the local propose tool. Everything else
-// (Bash/Edit/Write, any other MCP tool) is denied — the agent cannot write directly.
+// ── Tool gate. Read MCP tools pass silently. EVERY write tool is blocked until the
+// human confirms it in a native dialog: the sidecar emits confirm-request → the
+// WebView shows confirm_action → respond_confirm sends the decision back → this
+// promise resolves. DEFAULT-TO-CONFIRM: anything not clearly a read needs approval,
+// so a write can NEVER execute unattended. Bash/Edit/Write/etc. stay fully denied.
+const READ_PREFIX = /^(get_|query_|list_|search_)/;
+const READ_EXACT = new Set(["global_search", "payment_inbox", "monthly_closing_report"]);
+function isLumaRead(toolName) {
+  const t = toolName.replace(/^mcp__luma__/, "");
+  return READ_PREFIX.test(t) || READ_EXACT.has(t);
+}
+const CONFIRM_TIMEOUT_MS = 180000;
+
 const canUseTool = async (toolName, input) => {
-  if (toolName.startsWith("mcp__luma__") || toolName === "mcp__desktop__propose_action") {
+  if (toolName === "mcp__desktop__propose_action") {
     return { behavior: "allow", updatedInput: input };
   }
-  return {
-    behavior: "deny",
-    message:
-      "Solo se permiten consultas al MCP de LUMA y propose_action. Para escribir, usa propose_action.",
-  };
+  if (toolName.startsWith("mcp__luma__")) {
+    if (isLumaRead(toolName)) {
+      return { behavior: "allow", updatedInput: input };
+    }
+    // WRITE → require explicit human confirmation. Never auto-allow.
+    const id = randomUUID();
+    return await new Promise((resolve) => {
+      let settled = false;
+      const settle = (decision) => {
+        if (settled) return;
+        settled = true;
+        pendingConfirms.delete(id);
+        resolve(decision);
+      };
+      pendingConfirms.set(id, (allow) =>
+        settle(
+          allow
+            ? { behavior: "allow", updatedInput: input }
+            : { behavior: "deny", message: "El usuario canceló la acción." },
+        ),
+      );
+      send({
+        type: "confirm-request",
+        id,
+        toolName: toolName.replace(/^mcp__luma__/, ""),
+        input,
+      });
+      setTimeout(
+        () => settle({ behavior: "deny", message: "Confirmación expirada; no se ejecutó nada." }),
+        CONFIRM_TIMEOUT_MS,
+      );
+    });
+  }
+  return { behavior: "deny", message: "Herramienta no permitida en el asistente de LUMA." };
 };
 
 // Best-effort: detect an expired/revoked MCP token mid-session so the UI can tell
