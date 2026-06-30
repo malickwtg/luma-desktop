@@ -79,3 +79,113 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           args: "--target aarch64-apple-darwin"
+
+  # Windows x64 build. UNSIGNED (no Authenticode cert yet): the NSIS installer
+  # runs, but SmartScreen shows an "unknown publisher" prompt the user clicks
+  # through (Más información → Ejecutar de todos modos). Independent of the macOS
+  # job so a Windows failure never blocks a mac release. The Agent SDK ships a
+  # native Windows binary (claude-agent-sdk-win32-x64), so the sidecar works.
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JS deps (app + sidecar)
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --dir sidecar install --frozen-lockfile
+
+      - name: Bundle sidecar (bun --compile) + claude.exe as externalBin
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          bun build sidecar/src/index.mjs --compile --target=bun-windows-x64 \
+            --outfile src-tauri/binaries/luma-sidecar-x86_64-pc-windows-msvc.exe
+          echo "--- contents of the win32-x64 SDK package ---"
+          ls -R sidecar/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64 || true
+          CLAUDE_BIN=$(find sidecar/node_modules -path "*claude-agent-sdk-win32-x64*" \( -name "claude.exe" -o -name "claude" \) -type f | head -1)
+          if [ -z "$CLAUDE_BIN" ]; then echo "windows claude binary not found" >&2; exit 1; fi
+          cp "$CLAUDE_BIN" src-tauri/binaries/claude-x86_64-pc-windows-msvc.exe
+          ls -lh src-tauri/binaries
+
+      # No Authenticode signing → unsigned NSIS .exe. TAURI_SIGNING_* is the
+      # updater's own minisign key (same as macOS) — independent of code signing.
+      - name: Build & release (unsigned x64 NSIS + updater)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "LUMA Desktop ${{ github.ref_name }}"
+          releaseBody: "Build x64 sin firmar por Microsoft. Al instalar, SmartScreen puede avisar: pulsa 'Más información' → 'Ejecutar de todos modos'. Carga luma.waytogrow.es con el asistente; auto-update activado."
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: "--target x86_64-pc-windows-msvc"
+
+  # Both build jobs each write a single-platform latest.json (race). This job
+  # runs after both and CLOBBERS latest.json with a merged version containing
+  # BOTH darwin-aarch64 and windows-x86_64, derived from the uploaded .sig files
+  # (version-robust: names are read from the .sig filenames, not hardcoded).
+  # This guarantees the macOS updater keeps working when Windows is added.
+  merge-updater-json:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Merge latest.json across platforms
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          REPO="${GITHUB_REPOSITORY}"
+          BASE="https://github.com/${REPO}/releases/download/${TAG}"
+          mkdir -p sigs
+          gh release download "$TAG" -R "$REPO" -p "*.sig" -D sigs
+          echo "--- downloaded .sig assets ---"; ls -la sigs
+          PLATFORMS="{}"
+          DARWIN_SIG=$(ls sigs/*app.tar.gz.sig 2>/dev/null | head -1 || true)
+          if [ -n "$DARWIN_SIG" ]; then
+            ART=$(basename "$DARWIN_SIG" .sig)
+            PLATFORMS=$(echo "$PLATFORMS" | jq --arg url "$BASE/$ART" --rawfile sig "$DARWIN_SIG" \
+              '. + {"darwin-aarch64": {"url":$url, "signature":$sig}}')
+          fi
+          WIN_SIG=$(ls sigs/*-setup.exe.sig sigs/*-setup.nsis.zip.sig 2>/dev/null | head -1 || true)
+          if [ -n "$WIN_SIG" ]; then
+            ART=$(basename "$WIN_SIG" .sig)
+            PLATFORMS=$(echo "$PLATFORMS" | jq --arg url "$BASE/$ART" --rawfile sig "$WIN_SIG" \
+              '. + {"windows-x86_64": {"url":$url, "signature":$sig}}')
+          fi
+          jq -n --arg version "$VERSION" --arg pub "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                --arg notes "Actualización de LUMA Desktop" --argjson platforms "$PLATFORMS" \
+            '{version:$version, notes:$notes, pub_date:$pub, platforms:$platforms}' > latest.json
+          echo "--- merged latest.json ---"; cat latest.json
+          test "$(echo "$PLATFORMS" | jq 'keys|length')" -ge 1
+          gh release upload "$TAG" latest.json -R "$REPO" --clobber
